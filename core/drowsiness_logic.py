@@ -217,7 +217,7 @@ class DrowsinessDetector:
                 self.alarm_start_time = time.time()
             self.drowsy = True
         else:
-            # Nếu đang cảnh báo thì đợi đủ 3 giây rồi mới dừng
+            # Nếu đang cảnh báo thì đợi đủ 4 giây rồi mới dừng
             if self.drowsy:
                 elapsed = time.time() - self.alarm_start_time
                 if elapsed >= self.ALARM_DURATION:

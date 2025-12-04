@@ -1,3 +1,4 @@
+# app_window.py - Updated with mode selection and FPR comparison
 import cv2
 import numpy as np
 import os
@@ -13,13 +14,15 @@ from gui.video_panel import VideoPanel
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("Hệ thống Phát hiện Buồn ngủ")
-        self.root.geometry("1200x800")
+        self.root.title("Hệ thống Phát hiện Buồn ngủ - So sánh CNN & Algorithm")
+        self.root.geometry("1400x850")
         self.root.configure(bg="#1a1a2e")
 
         # Style configuration
         style = ttk.Style()
         style.theme_use('clam')
+        style.configure('TCombobox', fieldbackground='#0f3460', background='#00d9ff',
+                        foreground='white', arrowcolor='white')
 
         # === HEADER ===
         header = Frame(root, bg="#16213e", height=80)
@@ -28,8 +31,8 @@ class App:
 
         title = Label(
             header,
-            text="HỆ THỐNG PHÁT HIỆN BUỒN NGỦ NGƯỜI LÁI XE",
-            font=("Segoe UI", 22, "bold"),
+            text="HỆ THỐNG PHÁT HIỆN BUỒN NGỦ - SO SÁNH CNN & ALGORITHM",
+            font=("Segoe UI", 20, "bold"),
             fg="#00d9ff",
             bg="#16213e"
         )
@@ -57,13 +60,13 @@ class App:
         self.panel.pack(padx=10, pady=10)
 
         # === RIGHT PANEL - STATS ===
-        right_panel = Frame(main_container, bg="#0f3460", width=350)
+        right_panel = Frame(main_container, bg="#0f3460", width=450)
         right_panel.pack(side="right", fill="both", padx=(10, 0))
         right_panel.pack_propagate(False)
 
         stats_title = Label(
             right_panel,
-            text="THÔNG SỐ GIÁM SÁT",
+            text="THÔNG SỐ & SO SÁNH",
             font=("Segoe UI", 14, "bold"),
             fg="#ffffff",
             bg="#0f3460",
@@ -71,7 +74,30 @@ class App:
         )
         stats_title.pack()
 
-        # Stats cards container
+        # === NEW: MODE SELECTION ===
+        mode_frame = Frame(right_panel, bg="#1a1a2e", relief="flat")
+        mode_frame.pack(fill="x", padx=15, pady=10)
+
+        Label(
+            mode_frame,
+            text="CHẾ ĐỘ PHÁT HIỆN",
+            font=("Segoe UI", 11, "bold"),
+            fg="#888888",
+            bg="#1a1a2e"
+        ).pack(pady=(10, 5))
+
+        self.mode_var = ttk.Combobox(
+            mode_frame,
+            values=["CNN Only", "Algorithm (MAR) Only", "Both (CNN + MAR)"],
+            state="readonly",
+            font=("Segoe UI", 10),
+            width=25
+        )
+        self.mode_var.set("Both (CNN + MAR)")
+        self.mode_var.pack(pady=5)
+        self.mode_var.bind("<<ComboboxSelected>>", self.on_mode_change)
+
+        # Stats container
         stats_container = Frame(right_panel, bg="#0f3460")
         stats_container.pack(fill="both", expand=True, padx=15, pady=10)
 
@@ -85,48 +111,28 @@ class App:
             0
         )
 
-        # Yawn Card
-        self.create_stat_card(
-            stats_container,
-            "SỐ LẦN NGÁP",
-            "yawn_value",
-            "yawn_status",
-            "#ff6b6b",
-            1
-        )
-
-        # Alert Card
-        alert_card = Frame(stats_container, bg="#1a1a2e", relief="flat", bd=0)
-        alert_card.pack(fill="x", pady=15)
+        # === NEW: FPR COMPARISON CARD ===
+        fpr_card = Frame(stats_container, bg="#1a1a2e", relief="flat", bd=0)
+        fpr_card.pack(fill="x", pady=15)
 
         Label(
-            alert_card,
-            text="TRẠNG THÁI",
+            fpr_card,
+            text="SO SÁNH FPR (False Positive Rate)",
             font=("Segoe UI", 11, "bold"),
             fg="#888888",
             bg="#1a1a2e"
         ).pack(pady=(10, 5))
 
-        self.alert_canvas = Canvas(alert_card, width=280, height=100, bg="#1a1a2e", highlightthickness=0)
-        self.alert_canvas.pack(pady=10)
-
-        self.alert_label = Label(
-            alert_card,
-            text="BÌNH THƯỜNG",
-            font=("Segoe UI", 20, "bold"),
-            fg="#4ecca3",
-            bg="#1a1a2e"
-        )
-        self.alert_label.pack()
-
-        self.counter_label = Label(
-            alert_card,
-            text="Bộ đếm: 0 / 0",
+        self.fpr_comparison = Label(
+            fpr_card,
+            text="Chưa có dữ liệu",
             font=("Segoe UI", 10),
-            fg="#aaaaaa",
-            bg="#1a1a2e"
+            fg="#ffffff",
+            bg="#1a1a2e",
+            justify="left"
         )
-        self.counter_label.pack(pady=(5, 10))
+        self.fpr_comparison.pack(pady=5)
+
 
         # === BOTTOM - CONTROLS ===
         bottom_frame = Frame(root, bg="#16213e", height=100)
@@ -154,6 +160,7 @@ class App:
             ("Mở Video", self.open_video, "#00d9ff"),
             ("Dừng", self.stop, "#ff6b6b"),
             ("Tắt Cảnh Báo", self.mute_alarm, "#ffa500"),
+            ("Reset Stats", self.reset_stats, "#9b59b6"),  # NEW
             ("Thoát", self.exit, "#888888")
         ]
 
@@ -164,13 +171,45 @@ class App:
         self.running = False
         self.camera = None
         self.detector = Detector()
-        self.drowsiness = DrowsinessDetector(mouth_model_path="model/yawn_model.pt")
-        self.yawn_count = 0
+        self.drowsiness = None
+        self.init_drowsiness_detector()
 
         # Initial animation
         self.animate_alert_idle()
 
         print("[INFO] Ứng dụng khởi động thành công")
+
+    def init_drowsiness_detector(self):
+        """Khởi tạo detector theo mode được chọn"""
+        mode_map = {
+            "CNN Only": "cnn",
+            "Algorithm (MAR) Only": "algorithm",
+            "Both (CNN + MAR)": "both"
+        }
+        selected_mode = mode_map[self.mode_var.get()]
+
+        self.drowsiness = DrowsinessDetector(
+            mouth_model_path="model/yawn_model.pt",
+            detection_mode=selected_mode
+        )
+        print(f"[INFO] Detector initialized with mode: {selected_mode}")
+
+    def on_mode_change(self, event=None):
+        """Xử lý khi thay đổi mode"""
+        if self.running:
+            messagebox.showinfo("Thông báo", "Vui lòng dừng camera/video trước khi thay đổi chế độ!")
+            return
+
+        self.init_drowsiness_detector()
+        self.status_label.config(text=f"✓ Đã chuyển sang chế độ: {self.mode_var.get()}")
+
+    def reset_stats(self):
+        """Reset thống kê FPR"""
+        if self.drowsiness:
+            self.drowsiness.reset_statistics()
+            self.fpr_comparison.config(text="Đã reset - Chưa có dữ liệu")
+            self.status_label.config(text="✓ Đã reset thống kê")
+            print("[INFO] Statistics reset by user")
 
     def create_stat_card(self, parent, title, value_attr, status_attr, color, position):
         """Tạo card hiển thị thông số"""
@@ -240,6 +279,7 @@ class App:
             "#00d9ff": "#33e3ff",
             "#ff6b6b": "#ff8888",
             "#ffa500": "#ffb733",
+            "#9b59b6": "#b87fd9",
             "#888888": "#aaaaaa"
         }
         return colors.get(color, color)
@@ -247,35 +287,20 @@ class App:
     def animate_alert_idle(self):
         """Animation khi idle"""
         if not self.running:
-            self.alert_canvas.delete("all")
-            # Vẽ vòng tròn pulse
-            self.alert_canvas.create_oval(90, 20, 190, 120, outline="#4ecca3", width=3)
             self.root.after(1000, self.animate_alert_idle)
 
     def animate_alert_danger(self):
         """Animation khi nguy hiểm"""
         if self.running and hasattr(self, 'drowsiness') and self.drowsiness.drowsy:
-            self.alert_canvas.delete("all")
-            # Vẽ tam giác cảnh báo
-            self.alert_canvas.create_polygon(
-                140, 30, 100, 100, 180, 100,
-                fill="#ff6b6b", outline="#ff6b6b"
-            )
-            self.alert_canvas.create_text(
-                140, 75, text="!", font=("Arial", 40, "bold"), fill="#ffffff"
-            )
             self.root.after(500, self.animate_alert_danger)
 
-    # =========================================================
-    # =============== CHỨC NĂNG ĐIỀU KHIỂN ===================
-    # =========================================================
     def start_camera(self):
         """Khởi động camera"""
         self.stop()
         self.camera = Camera(0)
         self.running = True
         self.update_frame()
-        self.status_label.config(text="▶ Camera đang hoạt động")
+        self.status_label.config(text=f"▶ Camera - Mode: {self.mode_var.get()}")
         print("[INFO] Camera đã bật")
 
     def open_video(self):
@@ -295,7 +320,7 @@ class App:
         self.camera = Camera(video_path)
         self.running = True
         self.update_frame()
-        self.status_label.config(text="▶ Đang phát video")
+        self.status_label.config(text=f"▶ Video - Mode: {self.mode_var.get()}")
         print(f"[INFO] Đã mở video: {video_path}")
 
     def stop(self):
@@ -317,33 +342,21 @@ class App:
     def mute_alarm(self):
         """Tắt cảnh báo"""
         stop_alarm()
-        self.drowsiness.drowsy = False
-        self.drowsiness.counter_eye = 0
-        self.drowsiness.counter_mouth = 0
-        self.drowsiness.yawn_count = 0
-        self.drowsiness.last_yawn_state = False
-        self.yawn_count = 0
+        if self.drowsiness:
+            self.drowsiness.drowsy = False
+            self.drowsiness.counter_eye = 0
+            self.drowsiness.last_yawn_state = False
 
         self.status_label.config(text="🔇 Đã tắt cảnh báo")
-        self.alert_label.config(text="BÌNH THƯỜNG", fg="#4ecca3")
-        self.counter_label.config(text="Bộ đếm: 0 / 0")
-        self.alert_canvas.delete("all")
         print("[INFO] Đã tắt cảnh báo")
 
     def reset_display(self):
         """Reset hiển thị"""
         self.ear_value.config(text="0.00")
         self.ear_status.config(text="Đang chờ...")
-        self.yawn_value.config(text="0")
-        self.yawn_status.config(text="Đang chờ...")
-        self.alert_label.config(text="BÌNH THƯỜNG", fg="#4ecca3")
-        self.counter_label.config(text="Bộ đếm: 0 / 0")
-        self.alert_canvas.delete("all")
+        self.fpr_comparison.config(text="Chưa có dữ liệu")
         self.animate_alert_idle()
 
-    # =========================================================
-    # =============== CẬP NHẬT KHUNG HÌNH =====================
-    # =========================================================
     def update_frame(self):
         """Xử lý và hiển thị khung hình"""
         if not self.running or not self.camera:
@@ -375,6 +388,14 @@ class App:
                 drowsy = result["is_drowsy"]
                 self.yawn_count = result["yawn_count"]
 
+                # NEW: FPR data
+                fpr_cnn = result["fpr_cnn"]
+                fpr_mar = result["fpr_mar"]
+                total_frames = result["total_frames"]
+                cnn_yawn = result.get("cnn_yawn", False)
+                mar_yawn = result.get("mar_yawn", False)
+                mode = result["detection_mode"]
+
                 # Update stats
                 self.ear_value.config(text=f"{ear:.3f}")
                 if ear < 0.2:
@@ -382,23 +403,40 @@ class App:
                 else:
                     self.ear_status.config(text="✓ Mắt đang mở", fg="#4ecca3")
 
-                self.yawn_value.config(text=str(self.yawn_count))
-                if mouth_class == "yawn":
-                    self.yawn_status.config(text=f"⚠ Đang ngáp ({mouth_prob:.0%})", fg="#ff6b6b")
-                else:
-                    self.yawn_status.config(text=f"✓ Bình thường ({mouth_prob:.0%})", fg="#4ecca3")
+
+                # NEW: Update FPR comparison
+                if total_frames > 30:  # Chỉ hiển thị sau 30 frames
+                    if mode == "both":
+                        comparison_text = f"📊 Tổng frames: {total_frames}\n\n"
+                        comparison_text += f"CNN: {fpr_cnn}% frames ngáp\n"
+                        comparison_text += f"MAR: {fpr_mar}% frames ngáp\n\n"
+
+                        if fpr_cnn > fpr_mar:
+                            diff = fpr_cnn - fpr_mar
+                            comparison_text += f"⚠ CNN có FPR cao hơn {diff:.1f}%"
+                            self.fpr_comparison.config(fg="#ff6b6b")
+                        elif fpr_mar > fpr_cnn:
+                            diff = fpr_mar - fpr_cnn
+                            comparison_text += f"✅ MAR có FPR cao hơn {diff:.1f}%"
+                            self.fpr_comparison.config(fg="#ffa500")
+                        else:
+                            comparison_text += "✅ FPR bằng nhau"
+                            self.fpr_comparison.config(fg="#4ecca3")
+                    else:
+                        comparison_text = f"📊 Tổng frames: {total_frames}\n\n"
+                        if mode == "cnn":
+                            comparison_text += f"CNN: {fpr_cnn}% frames ngáp"
+                        else:
+                            comparison_text += f"MAR: {fpr_mar}% frames ngáp"
+                        self.fpr_comparison.config(fg="#ffffff")
+
+                    self.fpr_comparison.config(text=comparison_text)
 
                 if drowsy:
-                    self.alert_label.config(text="NGUY HIỂM!", fg="#ff6b6b")
                     self.status_label.config(text="🚨 CẢNH BÁO: Phát hiện buồn ngủ!")
                     self.animate_alert_danger()
                 else:
-                    self.alert_label.config(text="BÌNH THƯỜNG", fg="#4ecca3")
-                    self.status_label.config(text="✓ Đang giám sát - Tỉnh táo")
-
-                self.counter_label.config(
-                    text=f"Bộ đếm: {self.drowsiness.counter_eye} / {self.drowsiness.counter_mouth}"
-                )
+                    self.status_label.config(text=f"✓ Giám sát - Mode: {self.mode_var.get()}")
 
                 # Draw on frame
                 draw_face_box(frame, face["rect"], drowsy)
@@ -410,8 +448,15 @@ class App:
                 cv2.putText(frame, f"Ngap: {self.yawn_count}", (10, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
+                # Show mode and detection status
+                mode_text = f"Mode: {mode.upper()}"
+                if mode == "both":
+                    mode_text += f" (C:{int(cnn_yawn)} M:{int(mar_yawn)})"
+                cv2.putText(frame, mode_text, (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
                 if drowsy:
-                    cv2.putText(frame, "CANH BAO!!!", (10, 90),
+                    cv2.putText(frame, "CANH BAO!!!", (10, 120),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

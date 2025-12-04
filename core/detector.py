@@ -56,7 +56,7 @@ class Detector:
         self.MOUTH = list(range(48, 68))
 
         # ===== Load PyTorch model =====
-        cnn_path = os.path.join(BASE_DIR, "model", "yawn_model2.pt")
+        cnn_path = os.path.join(BASE_DIR, "model", "yawn_model3.pt")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mouth_model = SimpleCNN().to(self.device)
 

@@ -55,7 +55,7 @@ class MouthModel:
     def __init__(self, model_path=None, img_size=(48, 48), grayscale=True, device=None):
         base = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         if model_path is None:
-            model_path = os.path.join(base, "model", "yawn_model2.pt")
+            model_path = os.path.join(base, "model", "yawn_model3.pt")
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
